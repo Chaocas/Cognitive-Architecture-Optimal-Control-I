@@ -1,0 +1,124 @@
+function [] = cognitive_architecture( )  
+close all;
+clear all;
+global a b r w eta theta vd dt rp xO;
+
+dt=0.01;         % sampling period
+a=1;
+b=1;
+r=0.1;
+w=0.1;
+
+Sdt=0;
+dtf=0.2;         % optimization interval 0.2s
+
+xO=[0.5 0];
+theta=0.7;
+eta=0.001;
+i=1;
+%%%%%%%%%%%%%%%
+
+% addpath O:\AlterEgo\Code\OConline\HKBOCV;
+%Rdata=importdata('Francesco_solo.txt');
+Rdata=importdata('Chao_solo.txt');
+vd=diff(Rdata)/0.01;
+
+dataP=alterego_data();
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+source = alterego_client('127.0.0.1', 23420);
+sink = alterego_client('127.0.0.1', 23422);
+
+load('10cmDistortion.mat');
+input=idiot(end:-1:1);
+[param,stat]=sigm_fit(linspace(idiot(end),idiot(1),18),idiot(end:-1:1));
+
+while (true)
+    % try to read data from source server
+    [data, source] = source.get();
+    % check if receive was valid
+    if (data.invalid)
+        % print failure
+        fprintf(1, 'receiving failed\n');
+        % try to (re)connect
+        source = source.connect();
+        % wait a while
+        pause(1);
+        % stop further processing
+        continue;
+    end % if
+    
+    % skip any additional data in the incoming buffer
+    
+    source.skip();
+    
+    % compute whatever is required here
+    fprintf(1, 'received position %f time seconds %li microseconds %li\n', data.position, data.seconds, data.microseconds);
+    
+    
+    if(i==1)
+        dt=0.025;
+    else
+        dt=(data.seconds-dataP.seconds)+0.000001*(data.microseconds-dataP.microseconds);
+    end
+    
+    dataP.seconds=data.seconds;
+    dataP.microseconds=data.microseconds;
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% 
+    Sdt=Sdt+dt;
+    
+    p_leader=param(3)-(1/param(4))*log10((param(2)-param(1))./(data.position-param(1))-1);
+    
+    x3=p_leader+(p_leader-dataP.position)*dtf/dt;     % estimated position of human player
+    dataP.position=p_leader;
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%      
+    solinit=bvpinit(linspace(Sdt,Sdt+dtf,6),[xO(1,1) xO(1,2) 0.5 0]);
+    options=bvpset('RelTol',1e-2);
+    rp=x3;
+    
+    sol=bvp4c('state','bcon',solinit,options);
+    xint = linspace(Sdt,Sdt+dtf);
+    Sxint = deval(sol,xint);
+    
+    Etime=dt;
+    
+    if(Etime>0.2)
+      Etime=0.2;
+    elseif(Etime<0)
+      Etime=0;  
+    end 
+    num=floor(Etime*100/dtf); 
+    if(abs(num)>100)
+        num=100;
+    elseif(num==0)
+        num=1;
+    end
+    
+    xO=[Sxint(1,num) Sxint(2,num)];
+    
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    
+    dataP.seconds=data.seconds;
+    dataP.microseconds=data.microseconds;
+    data.position=Sxint(1,num);
+    
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    fprintf(1, 'sending position %f time seconds %li microseconds %li\n', data.position, data.seconds, data.microseconds);
+    
+    % send data to server
+    [data, sink] = sink.set(data);
+    
+    % check if sending was successful
+    if (data.invalid)
+        % print failed
+        fprintf(1, 'sending failed \n');        
+        sink = sink.connect();
+    end %if
+    
+    i=i+1;
+    
+end  %while
+
+end
+
