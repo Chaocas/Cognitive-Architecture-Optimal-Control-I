@@ -1,0 +1,7 @@
+function res = bcon(ya,yb,xO,rp)
+global theta rp xO;
+res = [ya(1)-xO(1,1);
+       ya(2)-xO(1,2);
+       yb(3)-theta*(yb(1)-rp);
+       yb(4)];
+end
